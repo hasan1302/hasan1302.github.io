@@ -1,7 +1,202 @@
 <!DOCTYPE html>
-<html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Russian Roulette</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #1a1a1a;
+            color: white;
+            font-family: Arial, sans-serif;
+            min-height: 100vh;
+            overflow: auto;
+        }
+        #gameContainer {
+            width: 100%;
+            max-width: 800px;
+            text-align: center;
+        }
+        canvas {
+            width: 100%;
+            height: auto;
+            max-height: 60vh;
+            border: 1px solid #fff;
+        }
+        #status {
+            margin-top: 10px;
+            font-size: clamp(14px, 4vw, 18px);
+        }
+        #stats {
+            margin-top: 10px;
+            font-size: clamp(12px, 3vw, 16px);
+        }
+        @media (max-width: 600px) {
+            #status, #stats {
+                font-size: clamp(12px, 3vw, 16px);
+            }
+        }
+    </style>
+</head>
 <body>
-<h1>Hello World</h1>
-<p>I'm hosted with GitHub Pages.</p>
+    <div id="gameContainer">
+        <canvas id="gameCanvas"></canvas>
+        <div id="status">Запусти игру в чате командой /startgame</div>
+        <div id="stats"></div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const statusDiv = document.getElementById('status');
+        const statsDiv = document.getElementById('stats');
+
+        function resizeCanvas() {
+            const container = document.getElementById('gameContainer');
+            canvas.width = Math.min(container.clientWidth, 800);
+            canvas.height = canvas.width * 0.75;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        let gameState = {
+            isGameRunning: false,
+            players: [],
+            bullets: [],
+            currentPlayer: null,
+            bloodEffects: [],
+        };
+
+        let stats = {};
+
+        if (window.Telegram?.WebApp) {
+            Telegram.WebApp.ready();
+            Telegram.WebApp.expand();
+            Telegram.WebApp.onEvent('message', (event) => {
+                const msg = JSON.parse(event.data);
+                handleBotMessage(msg);
+            });
+        }
+
+        const centerX = () => canvas.width / 2;
+        const centerY = () => canvas.height / 2;
+        const radius = () => Math.min(canvas.width, canvas.height) * 0.35;
+
+        function drawScene() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            gameState.players.forEach((player, index) => {
+                const angle = (2 * Math.PI / gameState.players.length) * index - Math.PI / 2;
+                const x = centerX() + radius() * Math.cos(angle);
+                const y = centerY() + radius() * Math.sin(angle);
+
+                ctx.beginPath();
+                ctx.arc(x, y, radius() * 0.1, 0, 2 * Math.PI);
+                ctx.fillStyle = player === gameState.currentPlayer ? '#ff5555' : '#55ff55';
+                ctx.fill();
+                ctx.fillStyle = '#fff';
+                ctx.font = `${clamp(10, canvas.width / 40, 14)}px Arial`;
+                ctx.textAlign = 'center';
+                ctx.fillText(player.name, x, y + radius() * 0.2);
+
+                if (player === gameState.currentPlayer) {
+                    ctx.save();
+                    ctx.translate(x, y);
+                    ctx.rotate(angle + Math.PI / 2);
+                    ctx.fillStyle = '#888';
+                    ctx.fillRect(-radius() * 0.05, -radius() * 0.15, radius() * 0.1, radius() * 0.05);
+                    ctx.fillRect(-radius() * 0.025, -radius() * 0.2, radius() * 0.15, radius() * 0.05);
+                    ctx.restore();
+                }
+            });
+
+            gameState.bloodEffects.forEach(effect => {
+                ctx.fillStyle = `rgba(255, 0, 0, ${effect.opacity})`;
+                ctx.beginPath();
+                ctx.arc(effect.x, effect.y, effect.size, 0, 2 * Math.PI);
+                ctx.fill();
+                effect.opacity -= 0.02;
+                effect.size += 1;
+            });
+            gameState.bloodEffects = gameState.bloodEffects.filter(e => e.opacity > 0);
+
+            updateStats();
+            requestAnimationFrame(drawScene);
+        }
+
+        function handleBotMessage(msg) {
+            const text = msg.text || '';
+            if (text.includes('Игра началась')) {
+                gameState.isGameRunning = true;
+                gameState.players = [];
+                gameState.bullets = [];
+                statusDiv.textContent = "Игра началась! Присоединяйся в чате.";
+            } else if (text.match(/(.+) присоединился/)) {
+                const name = text.match(/(.+) присоединился/)[1];
+                gameState.players.push({ id: gameState.players.length, name });
+                gameState.bullets.push(Math.random() < 0.5 ? 1 : 0);
+                statusDiv.textContent = `${name} присоединился. Игроков: ${gameState.players.length}/5`;
+            } else if (text.includes('Набор окончен')) {
+                gameState.bullets = gameState.bullets.slice(0, gameState.players.length);
+                statusDiv.textContent = "Набор окончен! Игра начинается.";
+            } else if (text.match(/(.+), пистолет у тебя/)) {
+                const name = text.match(/(.+), пистолет у тебя/)[1];
+                gameState.currentPlayer = gameState.players.find(p => p.name === name);
+                statusDiv.textContent = `${name}, стреляй в чате командой /boom!`;
+            } else if (text.match(/(.+) выстрелил и... БАМ/)) {
+                const name = text.match(/(.+) выстрелил и... БАМ/)[1];
+                const playerIndex = gameState.players.findIndex(p => p.name === name);
+                const angle = (2 * Math.PI / gameState.players.length) * playerIndex - Math.PI / 2;
+                const x = centerX() + radius() * Math.cos(angle);
+                const y = centerY() + radius() * Math.sin(angle);
+                gameState.bloodEffects.push({ x, y, size: radius() * 0.05, opacity: 1 });
+                gameState.players.splice(playerIndex, 1);
+                gameState.bullets.splice(playerIndex, 1);
+                statusDiv.textContent = `${name} мёртв!`;
+            } else if (text.match(/(.+) выстрелил... Щёлк/)) {
+                const name = text.match(/(.+) выстрелил... Щёлк/)[1];
+                statusDiv.textContent = `${name} выжил!`;
+            } else if (text.match(/Игра окончена! (.+) — последний выживший/)) {
+                const winnerName = text.match(/Игра окончена! (.+) — последний выживший/)[1];
+                const winner = gameState.players.find(p => p.name === winnerName);
+                if (winner) {
+                    if (!stats[winner.id]) stats[winner.id] = { name: winner.name, wins: 0 };
+                    stats[winner.id].wins += 1;
+                }
+                gameState.isGameRunning = false;
+                statusDiv.textContent = `Победа! ${winnerName} выжил!`;
+            } else if (text.includes('Игра окончена! Никто не выжил')) {
+                gameState.isGameRunning = false;
+                statusDiv.textContent = "Никто не выжил.";
+            } else if (text.startsWith('🏆 Статистика побед')) {
+                const lines = text.split('\n').slice(1);
+                lines.forEach(line => {
+                    const [name, winsPart] = line.split(': ');
+                    const wins = parseInt(winsPart);
+                    const playerId = Object.values(stats).find(s => s.name === name)?.id || gameState.players.length++;
+                    stats[playerId] = { name, wins };
+                });
+            }
+        }
+
+        function updateStats() {
+            const sortedStats = Object.values(stats).sort((a, b) => b.wins - a.wins);
+            statsDiv.innerHTML = "🏆 Статистика побед:<br>" + 
+                sortedStats.map(s => `${s.name}: ${s.wins} побед${s.wins % 10 === 1 && s.wins !== 11 ? "а" : "ы"}`).join('<br>');
+        }
+
+        function clamp(min, val, max) {
+            return Math.min(Math.max(val, min), max);
+        }
+
+        requestAnimationFrame(drawScene);
+    </script>
 </body>
 </html>
+
